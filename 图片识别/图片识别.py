@@ -3,7 +3,9 @@ import base64
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, AIMessageChunk
+from langgraph.checkpoint.memory import InMemorySaver
 
 load_dotenv()
 
@@ -29,9 +31,8 @@ SYSTEM_PROMPT = """
 - 如果图片中有文字，优先提取并展示
 - 如果用户未指定图片，提醒用户提供图片路径
 - 不要编造图片中没有的内容
+- 对话中要记住用户之前上传的图片内容，支持连续追问
 """
-
-history = []  # 会话历史，保留上下文
 
 
 def encode_image(image_path: str) -> tuple[str, str]:
@@ -45,6 +46,32 @@ def encode_image(image_path: str) -> tuple[str, str]:
     return base64.b64encode(path.read_bytes()).decode("utf-8"), MIME_MAP[ext]
 
 
+def find_image_in_input(text: str) -> tuple[str | None, str]:
+    """从用户输入中检测图片路径。返回 (路径, 剩余文本)。"""
+    stripped = text.strip()
+    parts = stripped.split()
+    for i in range(len(parts), 0, -1):
+        candidate = " ".join(parts[:i]).strip().strip('"').strip("'")
+        p = Path(candidate)
+        if p.exists() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
+            return candidate, stripped[len(candidate):].strip()
+    return None, stripped
+
+
+def build_message(user_input: str) -> HumanMessage:
+    """根据用户输入构建消息，检测图片路径并编码为多模态消息"""
+    image_path, text_part = find_image_in_input(user_input)
+
+    if image_path:
+        b64, mime = encode_image(image_path)
+        return HumanMessage(content=[
+            {"type": "text", "text": text_part or "请描述这张图片的内容。"},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ])
+
+    return HumanMessage(content=user_input)
+
+
 model = ChatOpenAI(
     model="qwen3.6-flash",
     base_url=os.environ["QWEN_MODEL_URL"],
@@ -54,36 +81,21 @@ model = ChatOpenAI(
     timeout=60,
 )
 
+checkpointer = InMemorySaver()
+
+agent = create_agent(
+    model=model,
+    tools=[],
+    system_prompt=SYSTEM_PROMPT,
+    checkpointer=checkpointer,
+)
+
+config = {"configurable": {"thread_id": "image_session"}}
+
 print("图片识别助手已就绪")
 print("  - 输入图片路径来识别图片内容")
-print("  - 可以追问图片细节")
+print("  - 可以追问图片细节（AI 会记住上下文）")
 print("  - 输入 quit 退出\n")
-
-
-def build_message(user_input: str) -> HumanMessage:
-    """根据用户输入构建消息，自动检测图片路径并编码为多模态消息。
-
-    从输入开头逐步缩小，找到第一个存在的图片文件作为路径，
-    路径后面的所有内容作为用户的问题。路径中可包含空格。
-    """
-    stripped = user_input.strip()
-    parts = stripped.split()
-
-    # 从完整输入开始，逐个减少单词，找到第一个存在的图片路径
-    for i in range(len(parts), 0, -1):
-        candidate = " ".join(parts[:i]).strip().strip('"').strip("'")
-        p = Path(candidate)
-        if p.exists() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
-            b64, mime = encode_image(candidate)
-            text_part = stripped[len(candidate):].strip()
-            return HumanMessage(content=[
-                {"type": "text", "text": text_part or "请描述这张图片的内容。"},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-            ])
-
-    # 纯文本消息（追问/闲聊）
-    return HumanMessage(content=user_input)
-
 
 if __name__ == "__main__":
     while True:
@@ -98,18 +110,15 @@ if __name__ == "__main__":
             print(f"助手: {e}")
             continue
 
-        history.append(message)
-        messages = [HumanMessage(content=SYSTEM_PROMPT)] + history
-
         print("助手: ", end="", flush=True)
-        full_response = ""
         try:
-            for chunk in model.stream(messages):
-                content = chunk.content
-                if isinstance(content, str) and content:
-                    print(content, end="", flush=True)
-                    full_response += content
-            history.append(AIMessage(content=full_response))
+            for chunk, _ in agent.stream(
+                {"messages": [message]},
+                config=config,
+                stream_mode="messages",
+            ):
+                if isinstance(chunk, AIMessageChunk) and chunk.content:
+                    print(chunk.content, end="", flush=True)
         except Exception as e:
             print(f"[出错] {e}")
         print()
