@@ -42,8 +42,8 @@ class Context:
 @tool
 def get_weather_for_location(city:str) -> str:
     '''获取指定城市的天气预报。'''
-    api_key = os.environ.get("WEATHER_API_KEY")
-    url = os.environ.get("WEATHER_API_URL")
+    api_key = os.environ["WEATHER_API_KEY"]
+    url = os.environ["WEATHER_API_URL"]
     params = {"key": api_key, "q": city, "lang": "zh"}
     
     response = requests.get(url, params=params, timeout=10)
