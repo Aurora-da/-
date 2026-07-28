@@ -1,10 +1,14 @@
+import os
 import requests
+from dotenv import load_dotenv
 from dataclasses import dataclass
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain.tools import tool, ToolRuntime
 from langchain_core.messages import AIMessageChunk
 from langgraph.checkpoint.memory import InMemorySaver
+
+load_dotenv()
 
 SYSTEM_PROMPT = ('''
 你是一名资深天气预报员，回答风格简洁、准确、有温度。
@@ -38,8 +42,8 @@ class Context:
 @tool
 def get_weather_for_location(city:str) -> str:
     '''获取指定城市的天气预报。'''
-    api_key = "e3538ff757954b05b3675610260905"
-    url = "http://api.weatherapi.com/v1/current.json"
+    api_key = os.environ.get("WEATHER_API_KEY")
+    url = os.environ.get("WEATHER_API_URL")
     params = {"key": api_key, "q": city, "lang": "zh"}
     
     response = requests.get(url, params=params, timeout=10)
