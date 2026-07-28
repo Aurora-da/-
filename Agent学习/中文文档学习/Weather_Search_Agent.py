@@ -1,14 +1,10 @@
-import os
 import requests
 from dataclasses import dataclass
-from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain.tools import tool, ToolRuntime
 from langchain_core.messages import AIMessageChunk
 from langgraph.checkpoint.memory import InMemorySaver
-
-load_dotenv()
 
 SYSTEM_PROMPT = ('''
 你是一名资深天气预报员，回答风格简洁、准确、有温度。
@@ -18,34 +14,34 @@ SYSTEM_PROMPT = ('''
 - get_user_location(runtime: ToolRuntime[Context])：获取用户当前所在的城市
 
 天气查询规则：
-1. 用户明确给出城市名（如"北京天气"）→ 直接调用 get_weather_for_location。
-2. 用户未给城市（如"今天天气怎么样"）→ 先调 get_user_location，再调 get_weather_for_location。
+1. 用户明确给出城市名（如“北京天气”）→ 直接调用 get_weather_for_location。
+2. 用户未给城市（如“今天天气怎么样”）→ 先调 get_user_location，再调 get_weather_for_location。
 3. get_user_location 失败 → 友好询问用户所在城市。
 4. 查询到天气后，用自然语言组织返回，附上简单的出行建议。
 
 对话规则：
-- 用户只是打招呼（"你好"）、感谢（"谢谢"）或闲聊时，直接友好回复，不要调用任何工具。
+- 用户只是打招呼（“你好”）、感谢（“谢谢”）或闲聊时，直接友好回复，不要调用任何工具。
 - 禁止在不知道城市的情况下编造天气信息。
 - 禁止跳过工具调用，所有天气数据必须来自工具。
 '''
 )
 
-checkpointer = InMemorySaver()
+checkpointer = InMemorySaver()  # 创建一个内存中的检查点保存器
 
 # 定义上下文模式
 @dataclass
 class Context:
     '''自定义运行时的上下文模式。'''
-    user_id: str
+    user_id:str
 
 # 定义工具
 @tool
-def get_weather_for_location(city: str) -> str:
+def get_weather_for_location(city:str) -> str:
     '''获取指定城市的天气预报。'''
-    api_key = os.environ['WEATHER_API_KEY']
-    url = os.environ['WEATHER_API_URL']
+    api_key = "e3538ff757954b05b3675610260905"
+    url = "http://api.weatherapi.com/v1/current.json"
     params = {"key": api_key, "q": city, "lang": "zh"}
-
+    
     response = requests.get(url, params=params, timeout=10)
     data = response.json()
 
@@ -71,16 +67,16 @@ def get_user_location(runtime: ToolRuntime[Context]) -> str:
     return "Florida" if user_id == "1" else "SF"
 
 agent = create_agent(
-    model=ChatOpenAI(
-        model="deepseek-v4-flash",
-        base_url=os.environ['DEEPSEEK_MODEL_URL'],
-        api_key=os.environ['DEEPSEEK_API_KEY'],
-        temperature=0.5
+    model = ChatOpenAI(
+        model="deepseek-chat",
+        base_url="https://api.deepseek.com/v1",
+        api_key="sk-21f086a7b49146a5b48f5bcc05a80775",
+        temperature = 0.5
     ),
-    tools=[get_weather_for_location, get_user_location],
-    context_schema=Context,
+    tools = [get_weather_for_location, get_user_location],
+    context_schema = Context,
     system_prompt=SYSTEM_PROMPT,
-    checkpointer=checkpointer
+    checkpointer = checkpointer
 )
 
 config = {"configurable": {"thread_id": "1"}}
@@ -98,7 +94,7 @@ while True:
         {"messages": [{"role": "user", "content": user_input}]},
         config=config,
         context=Context(user_id="1"),
-        stream_mode=["messages", "updates"],
+        stream_mode="messages"
     ):
         if isinstance(chunk, AIMessageChunk) and chunk.content:
             print(chunk.content, end="", flush=True)
