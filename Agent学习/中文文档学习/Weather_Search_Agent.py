@@ -73,8 +73,8 @@ def get_user_location(runtime: ToolRuntime[Context]) -> str:
 agent = create_agent(
     model = ChatOpenAI(
         model="deepseek-chat",
-        base_url="https://api.deepseek.com/v1",
-        api_key="sk-21f086a7b49146a5b48f5bcc05a80775",
+        base_url=os.environ["DEEPSEEK_API_BASE_URL"],
+        api_key=os.environ["DEEPSEEK_API_KEY"],
         temperature = 0.5
     ),
     tools = [get_weather_for_location, get_user_location],
