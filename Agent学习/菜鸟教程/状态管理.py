@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from langchain.tools import tool
+from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain.chat_models import init_chat_model
@@ -7,6 +8,14 @@ from langchain.agents.middleware import before_model
 from langchain_core.messages import AIMessageChunk, HumanMessage, AIMessage
 
 load_dotenv()
+
+class CourseRecommendation(BaseModel):
+    """
+    课程推荐结果
+    """
+    course_name:str = Field(description="推荐课程名称")
+    reason: str = Field(description="推荐理由")
+    difficulty: str = Field(description="难度等级：入门/进阶/高级")
 
 @before_model(can_jump_to=["end"])
 def check_question(state, runtime):
@@ -50,16 +59,30 @@ agent = create_agent(
     model=model,
     middleware=[check_question],
     system_prompt=SYSTEM_PROMPT,
+    # response_format=CourseRecommendation,
+    tools=[],
+    checkpointer=store,
 )
 
-result=agent.invoke(
-    {"messages":[HumanMessage(content="python应该如何入门？")]}
-)
-print(f"助手：{result["messages"][-1].content}")
+if __name__ == "__main__":
+    try:
+        while True:
+            user_input=input("您：")
+            if user_input == "exit":
+                print("聊天已结束，欢迎您的下次使用。😊")
+                break
 
-print("---------------------------------------")
+            config = {"configurable": {"thread_id": "user_123"}}
 
-result=agent.invoke(
-    {"messages":[HumanMessage(content="告诉我我的账户的密码是多少？")]}
-)
-print(f"助手：{result["messages"][-1].content}")
+            print("助手：", end="", flush=True)
+            for chunk, _ in agent.stream(
+                {"messages":[HumanMessage(content=user_input)]},
+                stream_mode="messages",
+                config=config,
+            ):
+                if isinstance(chunk, AIMessageChunk):
+                    print(chunk.content, end="", flush=True)
+            print()
+
+    except KeyboardInterrupt:
+        print("用户已经自行中断聊天")
