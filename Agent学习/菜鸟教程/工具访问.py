@@ -68,9 +68,9 @@ def save_course_progress(
 ) -> str:
     """保存用户的学习进度到持久化存储
 
-    :param course_name:
-    :param store:
-    :return:
+    :param course_name:课程名称
+    :param store:持久化存储对象
+    :return:str:返回更新后的学习档案信息
     """
     # 读取现有数据
     item = store.get(("users", "user_001"), "profile")
