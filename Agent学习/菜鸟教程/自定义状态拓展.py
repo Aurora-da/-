@@ -1,8 +1,11 @@
+from operator import add
 from typing import Annotated
 from dotenv import load_dotenv
 from langchain.agents import create_agent, AgentState
+from langgraph.graph import add_messages
 from langchain.chat_models import init_chat_model
-from langchain.tools import tool, InjectedState
+from langchain.tools import tool
+from langgraph.prebuilt import InjectedState
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from typing_extensions import TypedDict
 from langgraph.checkpoint.memory import InMemorySaver
@@ -12,8 +15,8 @@ load_dotenv()
 # 拓展 AgentState。 添加业务字段
 class ShoppingAgentState(AgentState):
     """购物助手的状态"""
-    cart: list[str]             # 购物车商品列表
-    total_price: float     # 总价钱
+    cart: Annotated[list[str], add]          # 购物车商品列表，使用 operator.add 做列表拼接
+    total_price: Annotated[float, add]     # 总价钱，使用 operator.add 做累加
 
 @tool
 def add_to_cart(
@@ -29,13 +32,10 @@ def add_to_cart(
     :param state:
     :return:
     """
-    cart = state.get("cart", [])
-    total = state.get("total_price", 0.0)
-
+    # 只返回增量值，reducer (operator.add) 会自动合并到现有 state 中
     return {
-        "cart": cart + [item],
-        "total_price": total + price,
-        "messages": [],
+        "cart": [item],          # 只返回新商品，reducer 会拼接到现有列表
+        "total_price": price,    # 只返回新增价格，reducer 会累加到现有总额
     }
 
 @tool
@@ -89,6 +89,7 @@ agent = create_agent(
     system_prompt=SYSTEM_PROMPT,
     checkpointer=store,
     tools=[add_to_cart, view_cart],
+    state_schema=ShoppingAgentState,
 )
 
 if __name__ == "__main__":
