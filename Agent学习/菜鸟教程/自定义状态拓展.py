@@ -67,7 +67,7 @@ def view_cart(
     items = '、'.join(cart)
     return f"购物车：{items}，总价：￥{total:.2f}"
 
-# ────────────── 3. 中间件 ──────────────
+# ────────────── 3. 动态提示词 ──────────────
 @dynamic_prompt
 def context_aware_prompt(
     request: ModelRequest,
