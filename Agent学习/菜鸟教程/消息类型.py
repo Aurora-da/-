@@ -1,19 +1,20 @@
-import os
-
 from dotenv import load_dotenv
 from langchain_core.messages import (
     HumanMessage, AIMessage, SystemMessage,
     ToolMessage, AIMessageChunk, trim_messages
 )
+from langchain.agents.middleware import dynamic_prompt
+from langchain.agents.middleware.types import ModelRequest
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
 from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
 
 load_dotenv()
 
-SYSTEM_PROMPT="""
-你是菜鸟教程的学习顾问，帮助用户找到适合的课程。
-"""
+# SYSTEM_PROMPT="""
+# 你是菜鸟教程的学习顾问，帮助用户找到适合的课程。
+# """
 
 # 方式一：标准构造方式
 msg = HumanMessage(content="请介绍一下菜鸟教程是干啥的。")
@@ -55,15 +56,45 @@ def get_course_detail(course_name: str) -> str:
     }
     return details.get(course_name.lower(), f"未找到与{course_name}相关的课程。")
 
+@dynamic_prompt
+def personalized_prompt(
+        request: ModelRequest,
+) -> str:
+    """根据上下文动态生成个性化的提示词。
+
+    :param request:
+    :return:
+    """
+    messages = request.state.get("messages", [])
+    message_count = len(messages)
+
+    # 可以根据不同的条件动态调整提示词
+    base_prompt = "你是一个学习助手，请帮助用户来进行学习。"
+
+    if message_count < 2:
+        # 对话刚开始，耐心引导
+        return base_prompt + "用户刚开始对话，清热请问候，然后询问他们的学习目标和当前的水平。"
+    elif message_count > 10:
+        # 长对话，提醒保持简洁
+        return base_prompt + "对话已经比较长了，回答要尽量简洁，每次不要太罗嗦。"
+    else:
+        # 正常对话阶段
+        return base_prompt + "根据用户的问题推荐合适的课程，如果有必要则使用 search_course 工具查询课程的信息。"
+
+
 model = init_chat_model(
     "deepseek:deepseek-v4-flash",
     temperature = 0.7,
 )
 
+store = InMemorySaver()
+
 agent = create_agent(
     model=model,
     tools=[search_courses, get_course_detail],
-    system_prompt=SYSTEM_PROMPT,
+    # system_prompt=SYSTEM_PROMPT,
+    checkpointer=store,
+    middleware=[personalized_prompt],
 )
 
 trimmed = trim_messages(
@@ -76,6 +107,7 @@ trimmed = trim_messages(
 )
 
 if __name__ == "__main__":
+    config={"configurable": {"thread_id": "user_123"}}
     while True:
         question=input("您：")
         if question in {"exit","quit","退出"}:
@@ -85,6 +117,7 @@ if __name__ == "__main__":
         for chunk, _ in agent.stream(
             {"messages": [{"role": "user", "content": question}]},
             stream_mode="messages",
+            config=config,
         ):
             print(chunk.content, end="", flush=True)
         print()
