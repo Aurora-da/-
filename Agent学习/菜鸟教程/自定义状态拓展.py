@@ -1,28 +1,29 @@
 from operator import add
 from typing import Annotated
 from dotenv import load_dotenv
-from langchain.agents import create_agent, AgentState
-from langgraph.graph import add_messages
 from langchain.chat_models import init_chat_model
-from langchain.tools import tool
+from langchain_core.tools import tool, InjectedToolCallId
+from langchain.agents import create_agent, AgentState
 from langgraph.prebuilt import InjectedState
-from langchain_core.messages import AIMessageChunk, HumanMessage
-from typing_extensions import TypedDict
+from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 load_dotenv()
 
-# 拓展 AgentState。 添加业务字段
+# ────────────── 1. 自定义状态 ──────────────
 class ShoppingAgentState(AgentState):
     """购物助手的状态"""
     cart: Annotated[list[str], add]          # 购物车商品列表，使用 operator.add 做列表拼接
     total_price: Annotated[float, add]     # 总价钱，使用 operator.add 做累加
 
+# ────────────── 2. 工具 ──────────────
 @tool
 def add_to_cart(
         item: str,
         price: float,
         state: Annotated[dict, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId],
 ):
     """将商品添加到购物车
 
@@ -32,11 +33,19 @@ def add_to_cart(
     :param state:
     :return:
     """
-    # 只返回增量值，reducer (operator.add) 会自动合并到现有 state 中
-    return {
-        "cart": [item],          # 只返回新商品，reducer 会拼接到现有列表
-        "total_price": price,    # 只返回新增价格，reducer 会累加到现有总额
-    }
+    # 构造成功消息
+    tool_message = ToolMessage(
+        content=f"已添加 {item}，价格 {price:.2f} 元",
+        tool_call_id=tool_call_id
+    )
+    # 用 Command 才能真正触发 reducer 合并到 state
+    return Command(
+        update = {
+            "cart": [item],           # reducer(operator.add) → 拼接
+            "total_price": price,    # reducer(operator.add) → 累加
+            "messages": [tool_message],
+        }
+    )
 
 @tool
 def view_cart(
@@ -55,6 +64,7 @@ def view_cart(
     items = '、'.join(cart)
     return f"购物车：{items}，总价：￥{total:.2f}"
 
+# ────────────── 3. 模型 & Agent ──────────────
 model = init_chat_model(
     "deepseek:deepseek-v4-flash",
     temperature=1.0,
@@ -92,7 +102,9 @@ agent = create_agent(
     state_schema=ShoppingAgentState,
 )
 
+# ────────────── 4. 交互循环 ──────────────
 if __name__ == "__main__":
+    config = {"configurable": {"thread_id": "user_123"}}
     try:
         while True:
             user_input = input("您：")
@@ -100,14 +112,13 @@ if __name__ == "__main__":
                 print("欢迎您的下次使用，再见😊")
                 break
 
-            config = {"configurable": {"thread_id": "user_123"}}
             print("助手：", end="", flush=True)
             for chunk, _ in agent.stream(
                 {"messages":[HumanMessage(user_input)]},
                 stream_mode="messages",
                 config=config,
             ):
-                if isinstance(chunk, AIMessageChunk):
+                if isinstance(chunk, AIMessageChunk) and chunk.content:
                     print(chunk.content, end="", flush=True)
             print()
 
