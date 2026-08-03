@@ -41,6 +41,9 @@ def custom_prompt(
 model = init_chat_model(
     "deepseek:deepseek-v4-flash",
     temperature=0.6,
+    extra_body={
+        "thinking": {"type": "disabled"}
+    }
 )
 
 store = InMemorySaver()
@@ -51,6 +54,7 @@ agent = create_agent(
     middleware=[custom_prompt],
     tools=[],
     checkpointer=store,
+    debug=True,
 )
 
 if __name__ == "__main__":
@@ -62,15 +66,20 @@ if __name__ == "__main__":
                 print("对话已结束，欢迎您的下次使用！😊")
                 break
 
-            print("助手：")
-            for chunk, _ in agent.stream(
+            result = agent.invoke(
                 {"messages": [HumanMessage(user_input)]},
                 config=config,
-                stream_mode="messages",
-            ):
-                if isinstance(chunk, AIMessageChunk):
-                    print(chunk.content, end="", flush=True)
-            print()
+            )
+
+            # 从最终状态中提取结构化响应
+            structured_data = result.get("structured_response")
+            if structured_data:
+                print(f"助手：{structured_data}")
+            else:
+                # 如果没有结构化数据，再尝试打印普通文本
+                last_message = result["messages"][-1]
+                print(f"助手：{last_message.content}")
+
 
     except KeyboardInterrupt:
         print("用户已经中断程序运行。")
