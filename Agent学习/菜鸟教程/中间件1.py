@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -7,7 +8,7 @@ from langchain.chat_models import init_chat_model
 from langchain.agents.middleware import(
     before_agent, after_agent,
     before_model, after_model,
-    dynamic_prompt,
+    dynamic_prompt, wrap_model_call
 )
 from langchain.messages import HumanMessage, AIMessageChunk
 from langchain.tools import tool
@@ -33,6 +34,27 @@ def pre_model(state, runtime):
     print(f" -> [before_model] 第 {msg_count} 消息。")
     return None
 
+@wrap_model_call()
+def retry_on_error(request, handler):
+    """模型调用失败自动重试，最多 3 次"""
+    max_retries = 3
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            result = handler(request)
+            if attempt > 0:
+                print(f"[重试成功] 第 {attempt+1} 次尝试")
+            return result
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = (attempt+1)*2
+                print(f"[重试] 第 {attempt+1} 次失败，{wait_time}秒后重试。")
+                time.sleep(wait_time)
+
+    # 所有重试都失败了
+    raise last_error
 
 @after_model()
 def post_model(state, runtime):
