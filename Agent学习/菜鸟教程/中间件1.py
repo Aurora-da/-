@@ -8,7 +8,8 @@ from langchain.chat_models import init_chat_model
 from langchain.agents.middleware import(
     before_agent, after_agent,
     before_model, after_model,
-    dynamic_prompt, wrap_model_call
+    dynamic_prompt, wrap_model_call,
+    wrap_tool_call,
 )
 from langchain.messages import HumanMessage, AIMessageChunk
 from langchain.tools import tool
@@ -19,7 +20,7 @@ load_dotenv()
 
 
 # 1. ———————————————————————— 自定义中间件 ————————————————————————
-@before_agent()
+@before_agent
 def start_log(state, runtime):
     """Agent 开始前。"""
     print(">>> [before_agent] Agent 开始 <<<")
@@ -27,14 +28,15 @@ def start_log(state, runtime):
     return None
 
 
-@before_model()
+@before_model
 def pre_model(state, runtime):
     """每次模型调用前"""
     msg_count = len(state.get("messages", []))
     print(f" -> [before_model] 第 {msg_count} 消息。")
     return None
 
-@wrap_model_call()
+
+@wrap_model_call
 def retry_on_error(request, handler):
     """模型调用失败自动重试，最多 3 次"""
     max_retries = 3
@@ -42,6 +44,7 @@ def retry_on_error(request, handler):
 
     for attempt in range(max_retries):
         try:
+            # 重试成功后使用 handler 直接调用真正的模型
             result = handler(request)
             if attempt > 0:
                 print(f"[重试成功] 第 {attempt+1} 次尝试")
@@ -56,10 +59,12 @@ def retry_on_error(request, handler):
     # 所有重试都失败了
     raise last_error
 
-@after_model()
+
+@after_model
 def post_model(state, runtime):
     """每次模型调用后"""
     last = state["messages"][-1] if state.get("messages") else None
+    # hasattr 函数是用来检查对象是否包含对应的属性
     if hasattr(last, "tool_calls") and last.tool_calls:
         tools = [tc['name'] for tc in last.tool_calls]
         print(f" <- [after_model] 请求工具： {tools}")
@@ -69,7 +74,34 @@ def post_model(state, runtime):
     return None
 
 
-@after_agent()
+@wrap_tool_call
+def retry_tool_on_error(request, handler):
+    """工具调用失败自动重试"""
+    max_retries = 3
+    last_result = None
+
+    for attempt in range(max_retries):
+        try:
+            result = handler(request)
+            # 检查是否是错误结果
+            if hasattr(result, "status") and result.status == "error":
+                if attempt < max_retries - 1:
+                    print(f" [重试] 工具返回错误，第{attempt+1}次重试")
+                    continue
+                if attempt > 0:
+                    print(f" [重试成功] 第{attempt+1}次尝试")
+                return result
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep((attempt+1) * 2)
+                print(f" [重试]异常{e},{attempt+1}次重试")
+            else:
+                raise
+
+    return last_result
+
+
+@after_agent
 def end_log(state, runtime):
     """Agent结束后。"""
     total_msgs = len(state.get("messages", []))
@@ -77,7 +109,7 @@ def end_log(state, runtime):
 
 
 # 2. ———————————————————————— 自定义工具 ————————————————————————————
-@tool()
+@tool
 def get_weather(city: str) -> str:
     '''获取指定城市的天气预报。'''
     api_key = os.environ['WEATHER_API_KEY']
@@ -104,7 +136,7 @@ def get_weather(city: str) -> str:
 
 
 # 3. ————————————————————————— 动态提示词 —————————————————————————————
-@dynamic_prompt()
+@dynamic_prompt
 def custom_prompt(
         request: ModelRequest,
 ) -> str:
@@ -147,7 +179,7 @@ model = init_chat_model(
 store = InMemorySaver()
 agent = create_agent(
     model=model,
-    middleware=[start_log, pre_model, post_model, end_log, custom_prompt],
+    middleware=[start_log, pre_model, post_model, end_log, custom_prompt, retry_tool_on_error],
     tools=[get_weather],
     checkpointer=store,
 )
