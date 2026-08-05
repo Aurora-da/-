@@ -1,3 +1,5 @@
+import time
+from datetime import datetime
 from dotenv import load_dotenv
 from typing import Annotated, Any
 from langchain.tools import tool
@@ -5,18 +7,107 @@ from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
-    HumanMessage,
-    AIMessageChunk,
-    AIMessage,
-    ToolMessage)
+    HumanMessage, AIMessageChunk,
+    AIMessage, ToolMessage
+)
+from langchain.agents.middleware import wrap_tool_call, dynamic_prompt
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
+from langchain.agents.middleware.types import ModelRequest
 
 load_dotenv()
 
+# 1. —————————————————————————— 中间件 ——————————————————————————
+@wrap_tool_call
+def monitor_tool_performance(request, handler):
+    """监控工具调用的性能指标"""
+    tool_name = request.tool_call.get("name", "unknown")
+    tool_args = request.tool_call.get("args", {})
+
+    # 记录开始时间
+    start_time = time.time()
+
+    try:
+        result = handler(request)
+        elapsed = time.time() - start_time
+
+        # 记录成功调用
+        print(f"[监控] {tool_name}{tool_args} 调用成功，耗时{elapsed:.2f}s")
+        return result
+    except Exception as e:
+        elapsed = time.time() - start_time
+        #记录调用失败
+        print(f"[监控] {tool_name}{tool_args} 调用失败，耗时{elapsed:.2f}s")
+        raise e
+
+
+@dynamic_prompt
+def custom_prompt(
+    request: ModelRequest,
+) -> str:
+    """动态生成系统提示词
+
+    根据当前时间、用户信息等动态调整提示词内容
+    :param request:
+    :return:
+    """
+    # 获取上下文信息
+    context = request.runtime.context
+    user_name = context.get("user_name", "用户") if context else "用户"
+
+    # 获取当前时间
+    now = datetime.now()
+
+    # 根据时间段生成问候语
+    hour = now.hour
+    if hour < 6:
+        greeting = "晚上好"
+    elif hour < 10:
+        greeting = "早上好"
+    elif hour < 14:
+        greeting = "中午好"
+    elif hour < 18:
+        greeting = "下午好"
+    else:
+        greeting = "晚上好"
+
+    # 根据星期几给出不同的提示
+    weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    weekday = weekdays[now.weekday()]
+
+    # 构建动态提示词
+    return f"""你是 {user_name} 的专属 AI 学习助手。
+
+    {greeting}！今天是 {now.strftime("%Y年%m月%d日")} {weekday}，当前时间 {now.strftime("%H:%M")}。
+
+    【你的角色】
+    你是一位耐心、专业的学习助手，致力于帮助用户提升学习效率。
+
+    【可用工具】
+    1. **conversation_stats** - 查看当前对话的统计信息（消息数量等）
+    2. **get_user_profile** - 查看用户的学习档案（姓名、水平、已完成课程）
+    3. **save_course_progress** - 记录用户新完成的课程
+
+    【工作原则】
+    1. 根据用户需求智能选择合适的工具
+    2. 调用工具后如实返回结果，不编造信息
+    3. 当用户询问学习进度时，主动使用工具查询
+    4. 鼓励用户持续学习，提供积极反馈
+    5. 回复时保持温暖、专业的语气
+
+    【当前用户信息】
+    - 姓名：{user_name}
+    - 时间：{now.strftime("%Y-%m-%d %H:%M")}
+    - 星期：{weekday}
+    - 时段：{greeting}
+
+    请根据以上信息，为用户提供最佳的个性化学习支持。"""
+
+
+# 2. —————————————————————————— 工具 ——————————————————————————
 @tool
 def conversation_stats(
-        state: Annotated[dict[str, Any], InjectedState],
+    state: Annotated[dict[str, Any], InjectedState],
 ) -> str:
     """获取当前对话的统计信息，如消息数量、对话长度等。
 
@@ -36,6 +127,7 @@ def conversation_stats(
         f"AI 回复的消息条数为：{len(ai_msgs)} | "
         f"工具返回的消息条数为：{len(tool_msgs)} | "
     )
+
 
 @tool
 def get_user_profile(
@@ -60,6 +152,7 @@ def get_user_profile(
         f"水平={profile.get('level','未知')}，"
         f"已完成课程={', '.join(profile.get('completed_courses', []))}"
     )
+
 
 @tool
 def save_course_progress(
@@ -88,14 +181,15 @@ def save_course_progress(
         f"{', '.join(profile['completed_courses'])}"
     )
 
-SYSTEM_PROMPT = """
-你是一名学习助手，可以根据用户需求调用工具：
-1. 查询当前对话消息统计；
-2. 查看用户个人学习档案；
-3. 记录用户新完成的课程。
-调用工具后如实返回结果，不要编造信息。
-"""
 
+# 3. —————————————————————————— 自定义模型 ——————————————————————————
+model = init_chat_model(
+    "deepseek:deepseek-v4-flash",
+    temperature = 0.6,
+)
+
+
+# 4. —————————————————————————— 自定义智能体 ——————————————————————————
 # 初始化内存存储并预置用户数据
 store = InMemoryStore()
 store.put(("users", "user_001"), "profile",{
@@ -106,18 +200,16 @@ store.put(("users", "user_001"), "profile",{
     }
 })
 
-model = init_chat_model(
-    "deepseek:deepseek-v4-flash",
-    temperature = 0.6,
-)
 
 agent = create_agent(
     model=model,
     store=store,
-    system_prompt=SYSTEM_PROMPT,
     tools=[conversation_stats, get_user_profile, save_course_progress],
+    middleware=[monitor_tool_performance, custom_prompt],
 )
 
+
+# 5. —————————————————————————— 开始执行 ——————————————————————————
 if __name__ == "__main__":
     try:
         while True:
