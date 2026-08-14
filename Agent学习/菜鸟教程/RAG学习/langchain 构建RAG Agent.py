@@ -4,7 +4,6 @@ from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, AIMessageChunk
-from langchain_core.messages import HumanMessageChunk
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
