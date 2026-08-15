@@ -37,6 +37,7 @@ embeddings = OpenAIEmbeddings(
 
 # 检查是否已有向量库，避免重复构建
 if os.path.exists(PERSIST_DIR) and os.listdir(PERSIST_DIR):
+    # 检测到向量存储已经存在，直接加载，防止重复构建
     print(f"检测到已有向量数据库，正在加载: {PERSIST_DIR}")
     vector_store = Chroma(
         collection_name="rag_agent_collection",
@@ -44,10 +45,11 @@ if os.path.exists(PERSIST_DIR) and os.listdir(PERSIST_DIR):
         persist_directory=PERSIST_DIR,
     )
 else:
+    # 目前还不存在向量存储，首先创建向量存储
     print("未检测到向量数据库，正在创建...")
     vector_store = Chroma.from_documents(
         documents=chunks,
-        embedding_function=embeddings,  # 确保参数名正确
+        embedding_function=embeddings,
         persist_directory=PERSIST_DIR,
     )
     print(f"已创建向量数据库，共 {len(chunks)} 个文档块")
