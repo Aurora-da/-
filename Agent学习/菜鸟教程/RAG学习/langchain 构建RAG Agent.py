@@ -52,7 +52,7 @@ else:
     )
     print(f"已创建向量数据库，共 {len(chunks)} 个文档块")
 
-# 修正检索器参数名
+# 创建检索器
 retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
 
